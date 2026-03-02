@@ -4125,42 +4125,26 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
 (function () {
   'use strict';
 
-  /* ── Helpers ── */
-  function apiBase() { return window.location.origin; }
-  function wsBase()  {
+  function wsBase() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     return proto + '//' + location.host;
   }
 
-  function wsCandidates() {
-    const base = wsBase();
-    const candidates = [base + '/api/ssh/pty'];
-    const path = location.pathname || '/';
-    const dir  = path.endsWith('/') ? path : path.slice(0, path.lastIndexOf('/') + 1);
-    const alt  = base + dir + 'api/ssh/pty';
-    if (!candidates.includes(alt)) candidates.push(alt);
-    return candidates;
-  }
-
-  /* ── Active PTY WebSocket map ── */
-  const ptySockets  = {};    // sessionId → WebSocket
-  const ptyCloseListeners = {};  // sessionId → cb
-  const ptyDataListeners  = {};  // sessionId → cb
+  // Per-session WebSocket + listener maps
+  const ptySockets          = {};
+  const ptyDataListeners    = {};
+  const ptyCloseListeners   = {};
 
   window.cmdbAPI = {
 
-    /* ─ DB ─────────────────────────────────────────── */
+    /* ── DB ──────────────────────────────────────────── */
     load: async () => {
       const r = await fetch('/api/db');
       return r.json();
     },
 
     save: async (db) => {
-      await fetch('/api/db', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(db),
-      });
+      await fetch('/api/db', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(db) });
       return true;
     },
 
@@ -4170,18 +4154,14 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
       return j.path || '/data/cmdb_data.json';
     },
 
-    /* ─ Export: POST to server → receive file download ── */
+    /* ── Export ─────────────────────────────────────── */
     export: async (db) => {
       try {
-        const r = await fetch('/api/db/export', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify(db),
-        });
+        const r = await fetch('/api/db/export', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(db) });
         const blob = await r.blob();
-        const date = new Date().toISOString().slice(0, 10);
+        const date = new Date().toISOString().slice(0,10);
         const a = document.createElement('a');
-        a.href     = URL.createObjectURL(blob);
+        a.href = URL.createObjectURL(blob);
         a.download = `cmdb_backup_${date}.json`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
@@ -4189,18 +4169,17 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
       } catch { return false; }
     },
 
-    /* ─ Import: file picker → upload ─────────────────── */
+    /* ── Import ─────────────────────────────────────── */
     import: () => new Promise((resolve) => {
       const input = document.createElement('input');
-      input.type   = 'file';
-      input.accept = '.json,application/json';
+      input.type = 'file'; input.accept = '.json,application/json';
       input.onchange = async () => {
         const file = input.files[0];
         if (!file) { resolve(null); return; }
         try {
           const fd = new FormData();
           fd.append('file', file);
-          const r = await fetch('/api/db/import', { method: 'POST', body: fd });
+          const r = await fetch('/api/db/import', { method:'POST', body:fd });
           const j = await r.json();
           resolve(j.ok ? j.data : null);
         } catch { resolve(null); }
@@ -4209,16 +4188,15 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
       input.click();
     }),
 
-    /* ─ Open external URL ─────────────────────────────── */
+    /* ── Open URL ──────────────────────────────────── */
     openURL: (url) => { window.open(url, '_blank', 'noopener'); },
 
-    /* ─ RDP: generate .rdp file for download ─────────── */
+    /* ── RDP: download .rdp file ──────────────────── */
     rdpOpen: ({ host, port, user, domain, gateway, gatewayUser, password }) => {
       const rdpHost  = port && port !== '3389' ? `${host}:${port}` : host;
       const fullUser = domain ? `${domain}\\${user}` : user;
       const gwHost   = gateway || null;
       const gwUser   = gatewayUser || user;
-
       const lines = [
         `full address:s:${rdpHost}`,
         `username:s:${fullUser}`,
@@ -4231,113 +4209,110 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
         'compression:i:1',
         'bitmapcachepersistenable:i:1',
       ];
-      if (gwHost) {
-        lines.push(
-          `gatewayhostname:s:${gwHost}`,
-          'gatewayusagemethod:i:1',
-          'gatewayprofileusagemethod:i:1',
-          'gatewaycredentialssource:i:0',
-          `gatewayusername:s:${gwUser}`,
-          'promptcredentialonce:i:1',
-        );
-      }
-      const content  = lines.join('\r\n') + '\r\n';
-      const safeName = host.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-      const blob = new Blob([content], { type: 'application/rdp' });
+      if (gwHost) lines.push(
+        `gatewayhostname:s:${gwHost}`,
+        'gatewayusagemethod:i:1',
+        'gatewayprofileusagemethod:i:1',
+        'gatewaycredentialssource:i:0',
+        `gatewayusername:s:${gwUser}`,
+        'promptcredentialonce:i:1',
+      );
+      const safeName = host.replace(/[^a-zA-Z0-9_\-.]/g, '_');
+      const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'application/rdp' });
       const a = document.createElement('a');
-      a.href     = URL.createObjectURL(blob);
+      a.href = URL.createObjectURL(blob);
       a.download = `rdp_${safeName}.rdp`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
       return Promise.resolve({ ok: true });
     },
 
-    /* ─ SSH open (inventory tab) ──────────────────────── */
+    /* ── SSH open (inventory tab) ─────────────────── */
     sshOpen: ({ host, port, user }) => {
-      // In web context: copy SSH command to clipboard
       const cmd = `ssh ${user ? user+'@' : ''}${host} -p ${port || 22}`;
       navigator.clipboard.writeText(cmd).catch(() => {});
       return Promise.resolve({ ok: true });
     },
 
-    /* ─ SSH PTY via WebSocket ─────────────────────────── */
+    /* ── SSH PTY via WebSocket ───────────────────── */
     sshPtyStart: ({ sessionId, host, port, user, password, cols, rows }) => {
       return new Promise((resolve) => {
-        // Kill existing
+        // Kill any existing session
         if (ptySockets[sessionId]) {
           try { ptySockets[sessionId].close(); } catch {}
           delete ptySockets[sessionId];
         }
 
-        const urls = wsCandidates();
-        let socket = null;
-        let attempt = 0;
-        let opened = false;
+        const url = wsBase() + '/api/ssh/pty';
+        let socket;
+        try {
+          socket = new WebSocket(url);
+        } catch (e) {
+          return resolve({ ok: false, error: 'Não foi possível criar WebSocket: ' + e.message });
+        }
 
-        const connect = () => {
-          socket = new WebSocket(urls[attempt]);
-          ptySockets[sessionId] = socket;
+        ptySockets[sessionId] = socket;
+        let resolved = false;
 
-          socket.onopen = () => {
-            socket.send(JSON.stringify({ type: 'start', host, port, user, password, cols: cols || 120, rows: rows || 30 }));
-          };
+        function done(result) {
+          if (!resolved) { resolved = true; resolve(result); }
+        }
 
-          socket.onmessage = (ev) => {
-            try {
-              const msg = JSON.parse(ev.data);
-              if (msg.type === 'open' && !opened) {
-                opened = true;
-                resolve({ ok: true });
-                return;
-              }
-              if (msg.type === 'error' && !opened) {
-                opened = true;
-                resolve({ ok: false, error: msg.message });
-                return;
-              }
-              if (msg.type === 'data') {
-                const cb = ptyDataListeners[sessionId];
-                if (cb) cb({ sessionId, data: msg.data });
-                return;
-              }
-              if (msg.type === 'close') {
-                const cb = ptyCloseListeners[sessionId];
-                if (cb) cb({ sessionId, code: msg.code });
-                delete ptySockets[sessionId];
-                return;
-              }
-            } catch {}
-          };
-
-          socket.onerror = () => {
-            if (!opened && attempt < urls.length - 1) {
-              attempt += 1;
-              try { socket.close(); } catch {}
-              connect();
-              return;
-            }
-            if (!opened) { opened = true; resolve({ ok: false, error: 'WebSocket error' }); }
-          };
-
-          socket.onclose = () => {
-            if (!opened && attempt < urls.length - 1) {
-              attempt += 1;
-              connect();
-              return;
-            }
-            if (!opened) { opened = true; resolve({ ok: false, error: 'Connection closed' }); }
-            const cb = ptyCloseListeners[sessionId];
-            if (cb) cb({ sessionId, code: -1 });
-            delete ptySockets[sessionId];
-          };
+        socket.onopen = () => {
+          // Send start message immediately on open
+          try {
+            socket.send(JSON.stringify({
+              type: 'start', host, port, user, password,
+              cols: cols || 120, rows: rows || 30,
+            }));
+          } catch (e) {
+            done({ ok: false, error: 'Erro ao enviar start: ' + e.message });
+          }
         };
 
-        connect();
+        socket.onmessage = (ev) => {
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch { return; }
 
-        // Timeout safety
+          if (msg.type === 'open') {
+            done({ ok: true });
+            return;
+          }
+          if (msg.type === 'error') {
+            done({ ok: false, error: msg.message });
+            return;
+          }
+          if (msg.type === 'data') {
+            const cb = ptyDataListeners[sessionId];
+            if (cb) cb({ sessionId, data: msg.data });
+            return;
+          }
+          if (msg.type === 'close') {
+            const cb = ptyCloseListeners[sessionId];
+            if (cb) cb({ sessionId, code: msg.code });
+            delete ptySockets[sessionId];
+            return;
+          }
+        };
+
+        socket.onerror = (ev) => {
+          console.error('[WS] onerror', ev);
+          done({ ok: false, error: 'Erro de conexão WebSocket — verifique o servidor' });
+        };
+
+        socket.onclose = (ev) => {
+          delete ptySockets[sessionId];
+          // Only resolve if not already resolved (e.g. from onerror)
+          done({ ok: false, error: `Conexão encerrada antes de abrir (code=${ev.code})` });
+          // Also notify close listeners if session was running
+          const cb = ptyCloseListeners[sessionId];
+          if (cb) cb({ sessionId, code: -1 });
+        };
+
+        // Safety timeout
         setTimeout(() => {
-          if (!opened) { opened = true; resolve({ ok: false, error: 'Connection timeout' }); }
-        }, 10000);
+          done({ ok: false, error: 'Timeout — servidor não respondeu em 15s' });
+        }, 15000);
       });
     },
 
@@ -4363,15 +4338,16 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
         s.send(JSON.stringify({ type: 'resize', cols, rows }));
     },
 
-    onPtyData:   (cb)  => { Object.keys(ptySockets).forEach(id => { ptyDataListeners[id]  = cb; }); window._ptyDataCb  = cb; },
-    offPtyData:  ()    => { Object.keys(ptyDataListeners).forEach(k => delete ptyDataListeners[k]); window._ptyDataCb  = null; },
-    onPtyClose:  (cb)  => { Object.keys(ptySockets).forEach(id => { ptyCloseListeners[id] = cb; }); window._ptyCloseCb = cb; },
-    offPtyClose: ()    => { Object.keys(ptyCloseListeners).forEach(k => delete ptyCloseListeners[k]); window._ptyCloseCb = null; },
+    // Expose maps so vOpenSSH can register per-session listeners
+    _ptySockets:        ptySockets,
+    _ptyDataListeners:  ptyDataListeners,
+    _ptyCloseListeners: ptyCloseListeners,
 
-    /* ─ expose internals for vOpenSSH ────────────────── */
-    _ptySockets:         ptySockets,
-    _ptyDataListeners:   ptyDataListeners,
-    _ptyCloseListeners:  ptyCloseListeners,
+    // Legacy no-ops (kept for compatibility)
+    onPtyData:   () => {},
+    offPtyData:  () => {},
+    onPtyClose:  () => {},
+    offPtyClose: () => {},
   };
 })();
 </script>
