@@ -4132,6 +4132,16 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
     return proto + '//' + location.host;
   }
 
+  function wsCandidates() {
+    const base = wsBase();
+    const candidates = [base + '/api/ssh/pty'];
+    const path = location.pathname || '/';
+    const dir  = path.endsWith('/') ? path : path.slice(0, path.lastIndexOf('/') + 1);
+    const alt  = base + dir + 'api/ssh/pty';
+    if (!candidates.includes(alt)) candidates.push(alt);
+    return candidates;
+  }
+
   /* ── Active PTY WebSocket map ── */
   const ptySockets  = {};    // sessionId → WebSocket
   const ptyCloseListeners = {};  // sessionId → cb
@@ -4259,51 +4269,70 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
           delete ptySockets[sessionId];
         }
 
-        const socket = new WebSocket(wsBase() + '/api/ssh/pty');
-        ptySockets[sessionId] = socket;
+        const urls = wsCandidates();
+        let socket = null;
+        let attempt = 0;
         let opened = false;
 
-        socket.onopen = () => {
-          socket.send(JSON.stringify({ type: 'start', host, port, user, password, cols: cols || 120, rows: rows || 30 }));
+        const connect = () => {
+          socket = new WebSocket(urls[attempt]);
+          ptySockets[sessionId] = socket;
+
+          socket.onopen = () => {
+            socket.send(JSON.stringify({ type: 'start', host, port, user, password, cols: cols || 120, rows: rows || 30 }));
+          };
+
+          socket.onmessage = (ev) => {
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg.type === 'open' && !opened) {
+                opened = true;
+                resolve({ ok: true });
+                return;
+              }
+              if (msg.type === 'error' && !opened) {
+                opened = true;
+                resolve({ ok: false, error: msg.message });
+                return;
+              }
+              if (msg.type === 'data') {
+                const cb = ptyDataListeners[sessionId];
+                if (cb) cb({ sessionId, data: msg.data });
+                return;
+              }
+              if (msg.type === 'close') {
+                const cb = ptyCloseListeners[sessionId];
+                if (cb) cb({ sessionId, code: msg.code });
+                delete ptySockets[sessionId];
+                return;
+              }
+            } catch {}
+          };
+
+          socket.onerror = () => {
+            if (!opened && attempt < urls.length - 1) {
+              attempt += 1;
+              try { socket.close(); } catch {}
+              connect();
+              return;
+            }
+            if (!opened) { opened = true; resolve({ ok: false, error: 'WebSocket error' }); }
+          };
+
+          socket.onclose = () => {
+            if (!opened && attempt < urls.length - 1) {
+              attempt += 1;
+              connect();
+              return;
+            }
+            if (!opened) { opened = true; resolve({ ok: false, error: 'Connection closed' }); }
+            const cb = ptyCloseListeners[sessionId];
+            if (cb) cb({ sessionId, code: -1 });
+            delete ptySockets[sessionId];
+          };
         };
 
-        socket.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data);
-            if (msg.type === 'open' && !opened) {
-              opened = true;
-              resolve({ ok: true });
-              return;
-            }
-            if (msg.type === 'error' && !opened) {
-              opened = true;
-              resolve({ ok: false, error: msg.message });
-              return;
-            }
-            if (msg.type === 'data') {
-              const cb = ptyDataListeners[sessionId];
-              if (cb) cb({ sessionId, data: msg.data });
-              return;
-            }
-            if (msg.type === 'close') {
-              const cb = ptyCloseListeners[sessionId];
-              if (cb) cb({ sessionId, code: msg.code });
-              delete ptySockets[sessionId];
-              return;
-            }
-          } catch {}
-        };
-
-        socket.onerror = () => {
-          if (!opened) { opened = true; resolve({ ok: false, error: 'WebSocket error' }); }
-        };
-
-        socket.onclose = () => {
-          if (!opened) { opened = true; resolve({ ok: false, error: 'Connection closed' }); }
-          const cb = ptyCloseListeners[sessionId];
-          if (cb) cb({ sessionId, code: -1 });
-          delete ptySockets[sessionId];
-        };
+        connect();
 
         // Timeout safety
         setTimeout(() => {
