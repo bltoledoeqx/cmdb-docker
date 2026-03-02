@@ -4125,23 +4125,10 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
 (function () {
   'use strict';
 
-  function wsBase() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return proto + '//' + location.host;
-  }
-
-  // Per-session WebSocket + listener maps
-  const ptySockets          = {};
-  const ptyDataListeners    = {};
-  const ptyCloseListeners   = {};
-
   window.cmdbAPI = {
 
-    /* ── DB ──────────────────────────────────────────── */
-    load: async () => {
-      const r = await fetch('/api/db');
-      return r.json();
-    },
+    /* ── DB ─────────────────────────────────────────── */
+    load: async () => (await fetch('/api/db')).json(),
 
     save: async (db) => {
       await fetch('/api/db', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(db) });
@@ -4149,20 +4136,18 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
     },
 
     dataPath: async () => {
-      const r = await fetch('/api/db/path');
-      const j = await r.json();
+      const j = await (await fetch('/api/db/path')).json();
       return j.path || '/data/cmdb_data.json';
     },
 
     /* ── Export ─────────────────────────────────────── */
     export: async (db) => {
       try {
-        const r = await fetch('/api/db/export', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(db) });
+        const r    = await fetch('/api/db/export', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(db) });
         const blob = await r.blob();
-        const date = new Date().toISOString().slice(0,10);
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `cmdb_backup_${date}.json`;
+        const a    = document.createElement('a');
+        a.href     = URL.createObjectURL(blob);
+        a.download = `cmdb_backup_${new Date().toISOString().slice(0,10)}.json`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
         return true;
@@ -4170,17 +4155,17 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
     },
 
     /* ── Import ─────────────────────────────────────── */
-    import: () => new Promise((resolve) => {
-      const input = document.createElement('input');
-      input.type = 'file'; input.accept = '.json,application/json';
+    import: () => new Promise(resolve => {
+      const input  = document.createElement('input');
+      input.type   = 'file';
+      input.accept = '.json,application/json';
       input.onchange = async () => {
         const file = input.files[0];
         if (!file) { resolve(null); return; }
         try {
           const fd = new FormData();
           fd.append('file', file);
-          const r = await fetch('/api/db/import', { method:'POST', body:fd });
-          const j = await r.json();
+          const j = await (await fetch('/api/db/import', { method:'POST', body:fd })).json();
           resolve(j.ok ? j.data : null);
         } catch { resolve(null); }
       };
@@ -4188,15 +4173,14 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
       input.click();
     }),
 
-    /* ── Open URL ──────────────────────────────────── */
-    openURL: (url) => { window.open(url, '_blank', 'noopener'); },
+    /* ── Open URL ───────────────────────────────────── */
+    openURL: (url) => window.open(url, '_blank', 'noopener'),
 
-    /* ── RDP: download .rdp file ──────────────────── */
+    /* ── RDP: download .rdp file ────────────────────── */
     rdpOpen: ({ host, port, user, domain, gateway, gatewayUser, password }) => {
       const rdpHost  = port && port !== '3389' ? `${host}:${port}` : host;
       const fullUser = domain ? `${domain}\\${user}` : user;
       const gwHost   = gateway || null;
-      const gwUser   = gatewayUser || user;
       const lines = [
         `full address:s:${rdpHost}`,
         `username:s:${fullUser}`,
@@ -4214,140 +4198,51 @@ if(!nData.notes.length && !nData.folders.length) notasNewNote();
         'gatewayusagemethod:i:1',
         'gatewayprofileusagemethod:i:1',
         'gatewaycredentialssource:i:0',
-        `gatewayusername:s:${gwUser}`,
+        `gatewayusername:s:${gatewayUser || user}`,
         'promptcredentialonce:i:1',
       );
-      const safeName = host.replace(/[^a-zA-Z0-9_\-.]/g, '_');
-      const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'application/rdp' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `rdp_${safeName}.rdp`;
+      const a    = document.createElement('a');
+      a.href     = URL.createObjectURL(new Blob([lines.join('\r\n') + '\r\n'], { type:'application/rdp' }));
+      a.download = `rdp_${host.replace(/[^a-zA-Z0-9_.\\-]/g,'_')}.rdp`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
       return Promise.resolve({ ok: true });
     },
 
-    /* ── SSH open (inventory tab) ─────────────────── */
+    /* ── SSH open (inventory tab) ───────────────────── */
     sshOpen: ({ host, port, user }) => {
-      const cmd = `ssh ${user ? user+'@' : ''}${host} -p ${port || 22}`;
-      navigator.clipboard.writeText(cmd).catch(() => {});
+      const uri = `ssh://${user ? encodeURIComponent(user)+'@' : ''}${host}:${port || 22}`;
+      window.location.href = uri;
       return Promise.resolve({ ok: true });
     },
 
-    /* ── SSH PTY via WebSocket ───────────────────── */
-    sshPtyStart: ({ sessionId, host, port, user, password, cols, rows }) => {
-      return new Promise((resolve) => {
-        // Kill any existing session
-        if (ptySockets[sessionId]) {
-          try { ptySockets[sessionId].close(); } catch {}
-          delete ptySockets[sessionId];
-        }
-
-        const url = wsBase() + '/api/ssh/pty';
-        let socket;
-        try {
-          socket = new WebSocket(url);
-        } catch (e) {
-          return resolve({ ok: false, error: 'Não foi possível criar WebSocket: ' + e.message });
-        }
-
-        ptySockets[sessionId] = socket;
-        let resolved = false;
-
-        function done(result) {
-          if (!resolved) { resolved = true; resolve(result); }
-        }
-
-        socket.onopen = () => {
-          // Send start message immediately on open
-          try {
-            socket.send(JSON.stringify({
-              type: 'start', host, port, user, password,
-              cols: cols || 120, rows: rows || 30,
-            }));
-          } catch (e) {
-            done({ ok: false, error: 'Erro ao enviar start: ' + e.message });
-          }
-        };
-
-        socket.onmessage = (ev) => {
-          let msg;
-          try { msg = JSON.parse(ev.data); } catch { return; }
-
-          if (msg.type === 'open') {
-            done({ ok: true });
-            return;
-          }
-          if (msg.type === 'error') {
-            done({ ok: false, error: msg.message });
-            return;
-          }
-          if (msg.type === 'data') {
-            const cb = ptyDataListeners[sessionId];
-            if (cb) cb({ sessionId, data: msg.data });
-            return;
-          }
-          if (msg.type === 'close') {
-            const cb = ptyCloseListeners[sessionId];
-            if (cb) cb({ sessionId, code: msg.code });
-            delete ptySockets[sessionId];
-            return;
-          }
-        };
-
-        socket.onerror = (ev) => {
-          console.error('[WS] onerror', ev);
-          done({ ok: false, error: 'Erro de conexão WebSocket — verifique o servidor' });
-        };
-
-        socket.onclose = (ev) => {
-          delete ptySockets[sessionId];
-          // Only resolve if not already resolved (e.g. from onerror)
-          done({ ok: false, error: `Conexão encerrada antes de abrir (code=${ev.code})` });
-          // Also notify close listeners if session was running
-          const cb = ptyCloseListeners[sessionId];
-          if (cb) cb({ sessionId, code: -1 });
-        };
-
-        // Safety timeout
-        setTimeout(() => {
-          done({ ok: false, error: 'Timeout — servidor não respondeu em 15s' });
-        }, 15000);
-      });
-    },
-
-    sshPtyKill: (sessionId) => {
-      const s = ptySockets[sessionId];
-      if (s) {
-        try { s.send(JSON.stringify({ type: 'kill' })); } catch {}
-        try { s.close(); } catch {}
-        delete ptySockets[sessionId];
+    /* ─────────────────────────────────────────────────
+       SSH PTY — client-side via ssh:// URI + clipboard
+       The SSH session runs on the USER'S machine.
+    ───────────────────────────────────────────────── */
+    sshPtyStart: ({ sessionId, host, port, user, password }) => {
+      // 1. Copy password to clipboard silently
+      if (password) {
+        navigator.clipboard.writeText(password).catch(() => {});
       }
-      return Promise.resolve(true);
+
+      // 2. Open ssh:// URI → user's default SSH client (PuTTY, Windows Terminal, iTerm2, etc.)
+      const sshUri = `ssh://${user ? encodeURIComponent(user)+'@' : ''}${host}:${port || 22}`;
+      window.location.href = sshUri;
+
+      // 3. Signal "opened" so the terminal panel can show instructions
+      return Promise.resolve({ ok: true, clientSide: true });
     },
 
-    sshPtyInput: (sessionId, data) => {
-      const s = ptySockets[sessionId];
-      if (s && s.readyState === WebSocket.OPEN)
-        s.send(JSON.stringify({ type: 'data', data }));
-    },
-
-    sshPtyResize: (sessionId, cols, rows) => {
-      const s = ptySockets[sessionId];
-      if (s && s.readyState === WebSocket.OPEN)
-        s.send(JSON.stringify({ type: 'resize', cols, rows }));
-    },
-
-    // Expose maps so vOpenSSH can register per-session listeners
-    _ptySockets:        ptySockets,
-    _ptyDataListeners:  ptyDataListeners,
-    _ptyCloseListeners: ptyCloseListeners,
-
-    // Legacy no-ops (kept for compatibility)
-    onPtyData:   () => {},
-    offPtyData:  () => {},
-    onPtyClose:  () => {},
-    offPtyClose: () => {},
+    sshPtyKill:   ()              => Promise.resolve(true),
+    sshPtyInput:  ()              => {},
+    sshPtyResize: ()              => {},
+    onPtyData:    ()              => {},
+    offPtyData:   ()              => {},
+    onPtyClose:   ()              => {},
+    offPtyClose:  ()              => {},
+    _ptyDataListeners:  {},
+    _ptyCloseListeners: {},
   };
 })();
 </script>
@@ -5902,23 +5797,13 @@ async function vOpenWeb(idx) { await openWebUI(idx); }
 async function vOpenSSH(idx) {
   const it   = data[idx];
   const host = it.ip || it.hostname;
-  if (!host) { toast('Nenhum IP configurado','warn'); return; }
+  if (!host) { toast('Nenhum IP configurado', 'warn'); return; }
 
   const porta  = (it.porta && it.porta !== '3389') ? it.porta : '22';
   const user   = it.usuario || '';
   const passwd = it.senha   || '';
-  const sessId = 'vault-' + idx;
-
-  // Kill previous session
-  if (vTermSession) {
-    await window.cmdbAPI.sshPtyKill(vTermSession).catch(()=>{});
-    delete window.cmdbAPI._ptyCloseListeners[vTermSession];
-    delete window.cmdbAPI._ptyDataListeners[vTermSession];
-    vTermSession = null;
-  }
-  if (vTerm) { vTerm.dispose(); vTerm = null; }
-  if (vTermFit) { vTermFit = null; }
-  if (window._vRO) { window._vRO.disconnect(); window._vRO = null; }
+  const sshUri = `ssh://${user ? encodeURIComponent(user)+'@' : ''}${host}:${porta}`;
+  const sshCmd = `ssh ${user ? user+'@' : ''}${host} -p ${porta}`;
 
   // Show terminal panel
   const termWrap = document.getElementById('vault-term-wrap');
@@ -5930,83 +5815,117 @@ async function vOpenSSH(idx) {
   ph.style.display       = 'none';
   closeBtn.style.display = 'block';
   title.textContent      = 'SSH — ' + (user ? user+'@' : '') + host + ':' + porta;
-  xtEl.innerHTML         = '';
 
-  // Init xterm.js terminal
-  const term = new Terminal({
-    theme: {
-      background:  '#080b10',
-      foreground:  '#e2eaf7',
-      cursor:      '#38bdf8',
-      selectionBackground: 'rgba(56,189,248,0.25)',
-    },
-    fontFamily:  'JetBrains Mono, Consolas, monospace',
-    fontSize:    13,
-    lineHeight:  1.4,
-    cursorBlink: true,
-    scrollback:  2000,
-    convertEol:  false,
-  });
-  vTerm = term;
-  vTermSession = sessId;
-
-  let fitAddon = null;
-  if (window.FitAddon) {
-    fitAddon = new FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
-    vTermFit = fitAddon;
-  }
-  term.open(xtEl);
-  if (fitAddon) fitAddon.fit();
-
-  term.writeln('\x1b[36m⟳ Conectando a ' + (user?user+'@':'') + host + ':' + porta + '\x1b[0m');
-  if (passwd) term.writeln('\x1b[32m✓ Autenticação por senha ativada\x1b[0m');
-
-  // PTY data/close listeners
-  window.cmdbAPI._ptyDataListeners[sessId] = ({ sessionId: sid, data: d }) => {
-    if (sid !== sessId || !vTerm) return;
-    vTerm.write(d);
-  };
-  window.cmdbAPI._ptyCloseListeners[sessId] = ({ sessionId: sid, code }) => {
-    if (sid !== sessId) return;
-    vTermSession = null;
-    if (vTerm) {
-      vTerm.writeln('\r\n\x1b[33m[Sessão encerrada — código ' + code + ']\x1b[0m');
-      vTerm.writeln('\x1b[2m[Clique SSH para reconectar]\x1b[0m');
-    }
-  };
-
-  // Start SSH
-  const result = await window.cmdbAPI.sshPtyStart({
-    sessionId: sessId, host, port: porta, user, password: passwd,
-    cols: term.cols, rows: term.rows,
-  });
-
-  if (!result.ok) {
-    term.writeln('\r\n\x1b[31m✗ ' + (result.error || 'Erro desconhecido') + '\x1b[0m');
-    toast('Erro SSH: ' + result.error, 'error');
-    return;
+  // Copy password to clipboard first
+  let clipOk = false;
+  if (passwd) {
+    try {
+      await navigator.clipboard.writeText(passwd);
+      clipOk = true;
+    } catch {}
   }
 
-  term.writeln('\x1b[32m✓ Conectado\x1b[0m\r\n');
-  toast('Terminal SSH conectado', 'success');
+  // Render info panel inside the xterm div
+  xtEl.innerHTML = `
+    <div style="padding:20px 24px;font-family:'JetBrains Mono',Consolas,monospace;font-size:12px;line-height:1.9;color:#e2eaf7">
 
-  // Keyboard input
-  term.onData(d => window.cmdbAPI.sshPtyInput(sessId, d));
+      <div style="color:#38bdf8;font-size:13px;margin-bottom:12px;font-weight:600">
+        ⟳ Abrindo cliente SSH local...
+      </div>
 
-  // Auto-resize
-  if (fitAddon && window.ResizeObserver) {
-    const ro = new ResizeObserver(() => {
-      try {
-        fitAddon.fit();
-        window.cmdbAPI.sshPtyResize(sessId, term.cols, term.rows);
-      } catch {}
-    });
-    ro.observe(xtEl);
-    window._vRO = ro;
-  }
-  term.focus();
+      <div style="background:#0e1420;border:1px solid #1e2d47;border-radius:4px;padding:12px 16px;margin-bottom:16px">
+        <div style="color:#4a6080;font-size:10px;letter-spacing:1px;margin-bottom:6px">DESTINO</div>
+        <div style="color:#38bdf8">${escHtml(user ? user+'@' : '')}${escHtml(host)}<span style="color:#4a6080">:${escHtml(porta)}</span></div>
+      </div>
+
+      ${passwd ? `
+      <div style="background:${clipOk ? 'rgba(52,211,153,.06)' : 'rgba(251,191,36,.06)'};border:1px solid ${clipOk ? 'rgba(52,211,153,.3)' : 'rgba(251,191,36,.3)'};border-radius:4px;padding:10px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:16px">${clipOk ? '✓' : '⚠'}</span>
+        <span style="color:${clipOk ? '#34d399' : '#fbbf24'}">
+          ${clipOk ? 'Senha copiada para o clipboard — cole com <kbd style="background:#1a2234;padding:1px 5px;border-radius:2px">Ctrl+V</kbd>' : 'Não foi possível copiar a senha automaticamente'}
+        </span>
+        <button onclick="navigator.clipboard.writeText('${escAttr(passwd)}').then(()=>toast('Senha copiada!','success'))"
+          style="margin-left:auto;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3);color:#38bdf8;padding:3px 10px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:11px">
+          📋 Copiar senha
+        </button>
+      </div>` : `
+      <div style="background:rgba(251,191,36,.05);border:1px solid rgba(251,191,36,.2);border-radius:4px;padding:10px 16px;margin-bottom:16px;color:#fbbf24">
+        ⚠ Sem senha cadastrada — autenticação por chave ou digite manualmente
+      </div>`}
+
+      <div style="background:#0e1420;border:1px solid #1e2d47;border-radius:4px;padding:12px 16px;margin-bottom:16px">
+        <div style="color:#4a6080;font-size:10px;letter-spacing:1px;margin-bottom:8px">COMANDO SSH</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <code style="color:#c084fc;flex:1">${escHtml(sshCmd)}</code>
+          <button onclick="navigator.clipboard.writeText('${escAttr(sshCmd)}').then(()=>toast('Comando copiado!','success'))"
+            style="background:rgba(192,132,252,.1);border:1px solid rgba(192,132,252,.3);color:#c084fc;padding:3px 10px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:11px">
+            📋 Copiar
+          </button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button onclick="window.location.href='${escAttr(sshUri)}'"
+          style="background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.4);color:#38bdf8;padding:7px 16px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600">
+          🚀 Abrir cliente SSH (ssh://)
+        </button>
+        <button onclick="vSshDownloadScript(${idx})"
+          style="background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);color:#34d399;padding:7px 16px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:12px">
+          ⬇ Baixar script .bat
+        </button>
+        ${passwd ? `<button onclick="navigator.clipboard.writeText('${escAttr(passwd)}').then(()=>toast('Senha copiada!','success'))"
+          style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);color:#fbbf24;padding:7px 16px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:12px">
+          🔑 Copiar senha
+        </button>` : ''}
+      </div>
+
+      <div style="margin-top:16px;color:#3a5070;font-size:10px;line-height:1.8;border-top:1px solid #1e2d47;padding-top:12px">
+        O SSH abre diretamente no seu terminal local (PuTTY, Windows Terminal, macOS Terminal).<br>
+        Para associar ssh:// ao PuTTY: <span style="color:#4a6080">HKEY_CLASSES_ROOT\ssh</span> no registro do Windows.
+      </div>
+    </div>`;
+
+  // Auto-trigger the URI
+  setTimeout(() => { window.location.href = sshUri; }, 300);
+  toast(clipOk ? 'Senha copiada — cole no terminal' : 'Abrindo SSH...', clipOk ? 'success' : 'info');
 }
+
+/* ── Download .bat script for SSH (Windows) ── */
+function vSshDownloadScript(idx) {
+  const it       = data[idx];
+  const host     = it.ip || it.hostname;
+  const porta    = (it.porta && it.porta !== '3389') ? it.porta : '22';
+  const user     = it.usuario || '';
+  const passwd   = it.senha   || '';
+  const safeName = (it.hostname || host).replace(/[^a-zA-Z0-9_-]/g, '_');
+
+  const bat = [
+    '@echo off',
+    `:: SSH — ${it.hostname || host}`,
+    `:: Gerado pelo CMDB em ${new Date().toLocaleString('pt-BR')}`,
+    '',
+    passwd ? `:: Copiando senha para o clipboard...` : `:: (sem senha cadastrada)`,
+    passwd ? `echo ${passwd.replace(/[&|<>^]/g, '^$&')}| clip && echo Senha copiada para clipboard` : '',
+    '',
+    user
+      ? `start "" "C:\Program Files\PuTTY\putty.exe" -ssh ${user}@${host} -P ${porta}`
+      : `start "" "C:\Program Files\PuTTY\putty.exe" -ssh ${host} -P ${porta}`,
+    '',
+    `:: Alternativa — Windows Terminal / OpenSSH:`,
+    user
+      ? `:: ssh -p ${porta} ${user}@${host}`
+      : `:: ssh -p ${porta} ${host}`,
+  ].join('
+');
+
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(new Blob([bat], { type:'application/bat' }));
+  a.download = `ssh_${safeName}.bat`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast('Script .bat baixado', 'info');
+}
+
 
 function vTermClose(silent) {
   if (vTermSession) {
