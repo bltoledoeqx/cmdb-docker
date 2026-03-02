@@ -1,0 +1,206 @@
+{
+  "data": [
+    {
+      "type": "network",
+      "account": "EMS OPS",
+      "hostname": "PA WINDOWS",
+      "ibx": "SP3",
+      "classe": "Virtual Server",
+      "ip": "201.20.39.69",
+      "porta": "7493",
+      "dominio": "br-equinix-ms.com.br",
+      "usuario": "btoledo",
+      "senha": "9]tH2`ql#wUB53Ut?\\P",
+      "so": "Windows",
+      "gateway": "sppawin.global.equinix.com",
+      "gwuser": "btoledo",
+      "gwpass": "Camilla@1312",
+      "usegw": "sim",
+      "obs": "",
+      "tags": [
+        "ponte-de-acesso"
+      ]
+    },
+    {
+      "type": "network",
+      "account": "EMS OPS",
+      "hostname": "PA SP1",
+      "ibx": "SP1",
+      "classe": "Virtual Server",
+      "ip": "pasp1.corp.equinix.com",
+      "porta": "22",
+      "dominio": "",
+      "usuario": "btoledo",
+      "senha": "Camilla@1312",
+      "so": "Linux",
+      "gateway": "",
+      "gwuser": "",
+      "gwpass": "",
+      "usegw": "nao",
+      "obs": "",
+      "tags": [
+        "linux"
+      ]
+    },
+    {
+      "type": "html",
+      "account": "EMS OPS",
+      "hostname": "COMMVAULT",
+      "ibx": "SP3",
+      "classe": "HTML",
+      "ip": "https://cvsp3.equinix.com.br/commandcenter/",
+      "url": "https://cvsp3.equinix.com.br/commandcenter/",
+      "usuario": "btoledo",
+      "senha": "d8UgST*7",
+      "so": "Web UI",
+      "obs": "",
+      "tags": []
+    },
+    {
+      "type": "html",
+      "account": "EMS OPS",
+      "hostname": "ADSelf-Service",
+      "ibx": "",
+      "classe": "HTML",
+      "ip": "amer-reset-password.equinix.com.br/j_security_check",
+      "url": "amer-reset-password.equinix.com.br/j_security_check",
+      "usuario": "",
+      "senha": "",
+      "so": "Web UI",
+      "obs": "Reset de Senhas",
+      "tags": []
+    },
+    {
+      "type": "network",
+      "account": "EMS OPS",
+      "hostname": "PA RJ2",
+      "ibx": "",
+      "classe": "Virtual Server",
+      "ip": "parj1.corp.equinix.com",
+      "porta": "22",
+      "dominio": "",
+      "usuario": "btoledo",
+      "senha": "Camilla@1312",
+      "so": "Linux",
+      "gateway": "",
+      "gwuser": "",
+      "gwpass": "",
+      "usegw": "nao",
+      "obs": "",
+      "tags": [
+        "ponte-de-acesso"
+      ]
+    }
+  ],
+  "tags": [
+    "linux",
+    "ponte-de-acesso"
+  ],
+  "snippets": [
+    {
+      "id": 1772133027594,
+      "desc": "Encontrar e excluir arquivos com mais de 30 dias",
+      "packages": [
+        "linux"
+      ],
+      "script": "find /path/to/directory -type f -mtime +30 -exec rm -f {} \\;",
+      "created": "2026-02-26T19:10:27.594Z",
+      "_idx": 0
+    },
+    {
+      "id": 1772133050171,
+      "desc": "Monitorar espaço em disco em tempo real",
+      "packages": [
+        "linux"
+      ],
+      "script": "watch -n 5 'df -h'",
+      "created": "2026-02-26T19:10:50.171Z",
+      "_idx": 1
+    },
+    {
+      "id": 1772133092619,
+      "desc": "ORACLE AVENUE",
+      "packages": [
+        "ssh"
+      ],
+      "script": "ssh -p 1187 oracle@201.20.38.155",
+      "created": "2026-02-26T19:11:32.619Z",
+      "_idx": 2
+    },
+    {
+      "id": 1772207665844,
+      "desc": "Verificar portas em uso no sistema",
+      "packages": [
+        "linux"
+      ],
+      "script": "sudo netstat -tuln | grep LISTEN",
+      "created": "2026-02-27T15:54:25.844Z",
+      "_idx": 3
+    },
+    {
+      "id": 1772207694110,
+      "desc": "Verificar logs em tempo real",
+      "packages": [
+        "linux"
+      ],
+      "script": "tail -f /var/log/syslog",
+      "created": "2026-02-27T15:54:54.110Z",
+      "_idx": 4
+    },
+    {
+      "id": 1772207731171,
+      "desc": "Listar os 10 maiores arquivos ou diretórios",
+      "packages": [
+        "linux"
+      ],
+      "script": "du -ah /path/to/directory | sort -rh | head -n 10",
+      "created": "2026-02-27T15:55:31.171Z",
+      "_idx": 5
+    },
+    {
+      "id": 1772207784486,
+      "desc": "DDL USER ATE",
+      "packages": [
+        "oracle"
+      ],
+      "script": "set heading off;\nset echo off;\nSet pages 999;\nset long 90000;\n\n--# Identa\nexec DBMS_METADATA.set_transform_param (DBMS_METADATA.session_transform, 'PRETTY', true);\n--# coloca o / e ; no final.\nexec dbms_metadata.set_transform_param (dbms_metadata.session_transform,'SQLTERMINATOR',true);\nselect dbms_metadata.get_ddl('USER','APDATA560') DDL from dual;\nselect dbms_metadata.get_granted_ddl('SYSTEM_GRANT','ATE') DDL from dual;\nselect dbms_metadata.get_granted_ddl('ROLE_GRANT','ATE') DDL from dual;\nselect dbms_metadata.get_granted_ddl('OBJECT_GRANT','ATE') DDL from dual;",
+      "created": "2026-02-27T15:56:24.486Z",
+      "_idx": 6
+    },
+    {
+      "id": 1772207812491,
+      "desc": "Verificar Sessões travadas",
+      "packages": [
+        "oracle"
+      ],
+      "script": "select inst_id,sid,serial#,username,status,module,to_char(logon_time,'DD-MON-YY HH24:MI:SS') LOGON,sql_id,lockwait,schemaname,osuser,machine,program,service_name\nfrom gv$session\nwhere status not like '%TIVE'\norder by module,username;",
+      "created": "2026-02-27T15:56:52.491Z",
+      "_idx": 7
+    },
+    {
+      "id": 1772207844193,
+      "desc": "Kill Session",
+      "packages": [
+        "oracle"
+      ],
+      "script": "SELECT\n'ALTER SYSTEM KILL SESSION '||''''||SID||','||SERIAL#||''''||'IMMEDIATE;'\nFROM\nV$SESSION\nWHERE\nusername ='USER';",
+      "created": "2026-02-27T15:57:24.193Z",
+      "_idx": 8
+    },
+    {
+      "id": 1772207873523,
+      "desc": "LOCK USER",
+      "packages": [
+        "oracle"
+      ],
+      "script": "ALTER USER NOMEDOUSER ACCOUNT LOCK;",
+      "created": "2026-02-27T15:57:53.523Z",
+      "_idx": 9
+    }
+  ],
+  "snipPkgs": [
+    "linux",
+    "ssh",
+    "oracle"
+  ]
+}

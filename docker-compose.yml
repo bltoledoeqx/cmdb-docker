@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  cmdb:
+    build: .
+    container_name: cmdb-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"      # Change left side to expose on a different host port
+    volumes:
+      - cmdb-data:/data  # Persists cmdb_data.json across restarts
+    environment:
+      PORT:      3000
+      DATA_FILE: /data/cmdb_data.json
+    # Optional: run behind a reverse proxy (nginx/traefik) for HTTPS
+    # labels:
+    #   - "traefik.http.routers.cmdb.rule=Host(`cmdb.example.com`)"
+
+volumes:
+  cmdb-data:
+    driver: local
